@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>iCAUR &#8212; Units Reserved</title>
+  <link rel="stylesheet" href="/style.css" />
+  <style>
+    html { color: #E8E8E3; background: #120F0E; }
+    body { height: 100vh; height: 100dvh; min-height: 0; display: flex; flex-direction: column; background: linear-gradient(155deg, #3F2D25, #231815 36%, #120F0E 75%, #0D0D0D); }
+    header { padding: clamp(20px, 3vw, 48px); color: #C49F70; flex: none; }
+    main { flex: 1; min-height: 0; width: 100%; padding: 0 3vw 10vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+    #count { width: 100%; white-space: nowrap; font-size: min(27vw, 49vh); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; letter-spacing: -.045em; color: #C49F70; }
+    h1 { color: #E8E8E3; font-size: clamp(18px, 3.5vw, 64px); font-weight: 700; letter-spacing: .2em; margin: 2vh 0; }
+    .festival { color: #C8B6A6; font-size: clamp(11px, 1.4vw, 24px); margin: 1vh 0; }
+    #sound { position: fixed; bottom: 18px; right: 20px; border: 1px solid #8B7766; border-radius: 999px; padding: 10px 16px; color: #E4D6CD; background: #231815; cursor: pointer; font-size: 13px; }
+    #sound:focus-visible { outline: 3px solid #C49F70; outline-offset: 4px; }
+    #connection { position: fixed; bottom: 18px; left: 3vw; color: #C8B6A6; font-size: 12px; max-width: 45vw; }
+    #count.flash { animation: reserved-flash 1s ease-in-out 3; }
+    @keyframes reserved-flash { 50% { color: #F2D7AA; text-shadow: 0 0 40px #CB9243, 0 0 90px #C49F7080; } }
+  </style>
+</head>
+<body>
+  <header><span class="logo" role="img" aria-label="iCAUR"></span></header>
+  <main>
+    <div id="count" aria-live="polite" aria-label="Units reserved">&#8211;</div>
+    <h1>UNITS RESERVED</h1>
+    <p class="festival">Auto Focus Test Drive Festival 2026</p>
+  </main>
+  <div id="connection" role="status"></div>
+  <button id="sound" type="button">Enable sound</button>
+  <script src="/common.js"></script>
+  <script>
+    let previous = null;
+    let soundOn = false;
+    let busy = false;
+    $('#sound').onclick = () => { soundOn = true; chime(); $('#sound').remove(); };
+    $('#count').addEventListener('animationend', () => $('#count').classList.remove('flash'));
+    async function refresh() {
+      if (busy) return;
+      busy = true;
+      try {
+        const { count } = await api('/api/reserved');
+        const number = $('#count');
+        number.textContent = count.toLocaleString('en-US');
+        if (previous !== null && count > previous) {
+          number.classList.remove('flash');
+          void number.offsetWidth;
+          number.classList.add('flash');
+          if (soundOn) chime();
+        } else if (previous !== count) {
+          number.classList.remove('flash');
+        }
+        previous = count;
+        $('#connection').textContent = '';
+      } catch { $('#connection').textContent = 'Reconnecting\u2026'; }
+      finally { busy = false; }
+    }
+    refresh();
+    setInterval(refresh, POLL_MS);
+    document.addEventListener('visibilitychange', () => !document.hidden && refresh());
+  </script>
+</body>
+</html>

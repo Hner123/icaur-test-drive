@@ -24,7 +24,7 @@ function live(onUpdate, onCall) {
         for (const [id, calledAt] of now) {
           if (seen.get(id) !== calledAt) {
             const t = state.tickets.find((x) => x.number === id);
-            onCall({ number: t.number, model: t.model, name: t.name });
+            onCall({ number: t.number, model: t.model, name: t.name, callCount: t.callCount });
           }
         }
       }
@@ -68,6 +68,30 @@ function chime() {
       o.stop(t + 0.65);
     });
   } catch {}
+}
+
+// Spoken text only; exact parity with lib/announce.js is tested.
+function callAnnouncementText(ticket) {
+  const rawNumber = String(ticket.number || '');
+  const parts = rawNumber.match(/^([A-Za-z0-9]{1,6})-(\d{3,4})$/);
+  const digitWords = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+  const small = [...digitWords, 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+  const tens = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+  const prefix = parts && parts[1].match(/[A-Za-z]|\d+/g);
+  const valid = prefix && prefix.every((part) => !/^\d/.test(part) || Number(part) <= 99);
+  const number = valid
+    ? `${prefix.map((part) => {
+      if (!/^\d/.test(part)) return part.toUpperCase();
+      const value = Number(part);
+      return value < 20 ? small[value] : tens[Math.floor(value / 10)] + (value % 10 ? '-' + digitWords[value % 10] : '');
+    }).join(' ')}, ${[...parts[2]].map((digit) => digitWords[Number(digit)]).join(' ')}`
+    : [...rawNumber].join(' ');
+  const name = String(ticket.name || '').replace(/<[^>]*>/g, '')
+    .replace(/[^\p{L}\s'\-.]/gu, '').replace(/\s+/g, ' ').trim().slice(0, 60).trim();
+  const customer = name ? `, ${name}` : '';
+  return ticket.callCount > 1
+    ? `Now serving Queue Number ${number}${customer}. Please proceed to the iCAUR Booth. Thank you!`
+    : `Queue Number ${number}${customer}. Please proceed to the iCAUR Booth for your test drive.`;
 }
 
 function toast(msg) {

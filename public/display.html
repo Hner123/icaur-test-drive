@@ -3,91 +3,122 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>XPENG Queue — Lobby Display</title>
+  <title>iCAUR Queue — Lobby Display</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
   <style>
-    /* Theme tokens — light (matching the kiosk) is the default; [data-theme=dark] for TV screens */
+    /* Sand at dusk by default; cards keep the same palette in both themes. */
     :root {
-      --d-bg: #f7f7f8; --d-ink: #111214; --d-ink-2: #5b5f66; --d-ink-3: #9aa0a8; --d-line: #e6e7ea;
-      --d-chip: #e6e7ea; --d-chip-ink: #111214; --d-idle: #d4d6da; --d-btn: #fff; --d-flash: #111214;
-      --d-shadow: rgba(17, 18, 20, 0.18);
+      --d-accent: #C49F70;
+      --d-muted: #C8B6A6;
+      --d-bar-ink: #231815;
+      --d-bar-line: rgba(35, 24, 21, .28);
+      --d-bar-btn: rgba(232, 232, 227, .5);
+      --d-bg: linear-gradient(165deg, #E4D6CD 0%, #D9B98F 34%, #966B4C 67%, #3F2316 100%);
     }
     :root[data-theme='dark'] {
-      --d-bg: #0d0e10; --d-ink: #fff; --d-ink-2: #c9cdd3; --d-ink-3: #8b9098; --d-line: #23252a;
-      --d-chip: #2b2e33; --d-chip-ink: #e3e6ea; --d-idle: #3a3d43; --d-btn: #1a1c20; --d-flash: #fff;
-      --d-shadow: rgba(0, 0, 0, 0.5);
+      --d-bar-ink: #E8E8E3;
+      --d-bar-line: rgba(228, 214, 205, .35);
+      --d-bar-btn: rgba(35, 24, 21, .7);
+      --d-bg: linear-gradient(155deg, #3F2D25 0%, #231815 36%, #120F0E 75%, #0D0D0D 100%);
     }
-    body { background: var(--d-bg); color: var(--d-ink); overflow: hidden; }
-    .bar { display: flex; align-items: center; justify-content: space-between; padding: 28px 48px; border-bottom: 1px solid var(--d-line); }
-    .bar .brand { font-size: 24px; color: var(--d-ink); }
-    .bar .brand small { color: var(--d-ink-3); border-color: var(--d-chip); font-size: 15px; }
+    body {
+      background: var(--d-bg) fixed; color: #E8E8E3; overflow: hidden;
+      height: 100vh; display: flex; flex-direction: column;
+    }
+    .bar {
+      display: flex; align-items: center; justify-content: space-between;
+      flex: none; gap: 20px; padding: 26px 40px; color: var(--d-bar-ink);
+    }
+    .bar .brand { color: inherit; }
+    .bar .brand small {
+      color: inherit; border-color: var(--d-bar-line); font-size: 14px;
+      font-weight: 700; letter-spacing: .18em; white-space: nowrap;
+    }
     .bar-right { display: flex; align-items: center; gap: 20px; }
-    #clock { font-size: 28px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--d-ink-2); }
-    .board { display: grid; grid-template-columns: repeat(var(--n, 2), 1fr); height: calc(100vh - 100px); }
-    .lane { padding: 40px 48px; display: flex; flex-direction: column; }
-    .lane + .lane { border-left: 1px solid var(--d-line); }
-    .lane-head { display: flex; align-items: center; gap: 20px; }
-    .lane-head img { width: 200px; filter: drop-shadow(0 12px 18px var(--d-shadow)); }
-    .lane-head .name { font-size: 44px; font-weight: 600; }
-    .lane-head .sub { color: var(--d-ink-3); font-size: 18px; }
-    .label { font-size: 15px; letter-spacing: .24em; text-transform: uppercase; color: var(--d-ink-3); margin: 40px 0 12px; }
-    .now { font-size: clamp(80px, 11vw, 180px); font-weight: 700; letter-spacing: -.03em; line-height: 1; color: var(--accent); }
+    #clock { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .board {
+      display: grid; grid-template-columns: repeat(var(--n, 2), minmax(0, 1fr));
+      flex: 1; min-height: 0; gap: 24px; padding: 0 40px 68px;
+    }
+    .lane {
+      container-type: inline-size; min-width: 0; --d-number-size: min(180px, 23cqw);
+      padding: clamp(24px, 2.5vw, 48px); display: flex; flex-direction: column;
+      border: 1px solid rgba(228, 214, 205, .13); border-radius: 24px;
+      background: linear-gradient(145deg, #231815, #1D1411);
+      box-shadow: 0 18px 40px rgba(18, 15, 14, .24);
+    }
+    /* Equal header and number slots align sections despite different image shapes or idle lanes. */
+    .lane-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: clamp(110px, 20cqw, 172px); }
+    .lane-head img {
+      order: 1; width: 48%; height: clamp(110px, 20cqw, 172px); object-fit: contain;
+      flex: none; filter: drop-shadow(0 12px 18px rgba(0, 0, 0, .35));
+    }
+    .lane-head > div { flex: 1; min-width: 0; }
+    .lane-head .name { font-size: clamp(38px, 7cqw, 64px); font-weight: 700; color: #fff; line-height: 1.05; }
+    .lane-head .sub { color: var(--d-muted); font-size: clamp(11px, 1.9cqw, 16px); text-transform: uppercase; letter-spacing: .14em; line-height: 1.6; margin-top: 10px; }
+    .label { font-size: clamp(12px, 1.9cqw, 16px); font-weight: 700; letter-spacing: .22em; text-transform: uppercase; color: var(--d-muted); margin: clamp(20px, 3.5vh, 38px) 0 10px; }
+    .lane-head + .label { color: var(--d-accent); }
+    /* Card-relative cap keeps seven-character tickets on one line. */
+    .now, .idle { font-size: var(--d-number-size); white-space: nowrap; font-weight: 700; letter-spacing: -.045em; line-height: 1.08; font-variant-numeric: tabular-nums; }
+    .now { color: var(--d-accent); }
     .now.flash { animation: flash 1s ease-in-out 4; }
-    @keyframes flash { 50% { color: var(--d-flash); text-shadow: 0 0 40px rgba(140,198,63,.8); } }
-    .now-name { font-size: 26px; color: var(--d-ink-2); margin-top: 8px; min-height: 32px; }
-    .idle { font-size: 64px; color: var(--d-idle); font-weight: 600; }
-    .next { display: flex; gap: 14px; flex-wrap: wrap; }
-    .next span { font-size: 34px; font-weight: 600; padding: 10px 22px; border: 1px solid var(--d-chip); border-radius: 12px; color: var(--d-chip-ink); }
-    .next .none { border: 0; color: var(--d-idle); padding-left: 0; }
-    .driving { color: var(--d-ink-3); font-size: 20px; }
-    .foot { margin-top: auto; color: var(--d-ink-3); font-size: 18px; }
-    .chip-btn { background: var(--d-btn); color: var(--d-ink-3); border: 1px solid var(--d-chip); border-radius: 999px; padding: 8px 14px; font-size: 13px; cursor: pointer; }
-    .chip-btn:hover { color: var(--d-ink); }
-    #sound { position: fixed; bottom: 16px; right: 16px; }
+    @keyframes flash { 50% { color: #E8C597; text-shadow: 0 0 40px rgba(196, 159, 112, .8); } }
+    .now-name { font-size: clamp(18px, 3.2cqw, 26px); color: var(--d-muted); margin-top: 8px; min-height: 1.3em; line-height: 1.3; overflow-wrap: anywhere; }
+    .idle { color: var(--d-muted); }
+    .next { display: flex; gap: 10px; flex-wrap: wrap; }
+    .next span { white-space: nowrap; font-size: clamp(20px, 3.5cqw, 32px); font-weight: 600; padding: 9px 14px; border: 1px solid #8B7766; background: rgba(228, 214, 205, .06); border-radius: 10px; color: #E4D6CD; }
+    .next .none { border: 0; background: none; color: var(--d-muted); padding-left: 0; font-weight: 400; }
+    .driving { color: var(--d-muted); font-size: clamp(16px, 2.7cqw, 22px); overflow-wrap: anywhere; }
+    .foot { margin-top: auto; padding-top: 20px; color: var(--d-muted); font-size: clamp(14px, 2.3cqw, 18px); }
+    .chip-btn { background: var(--d-bar-btn); color: var(--d-bar-ink); border: 1px solid var(--d-bar-line); border-radius: 999px; padding: 10px 16px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .chip-btn:hover { background: var(--d-bar-ink); color: #D9B98F; }
+    .chip-btn:focus-visible { outline: 3px solid #C49F70; outline-offset: 4px; }
+    #sound::before { content: attr(data-icon); margin-right: 6px; }
 
-    /* tablets in portrait and phones: stack the models and let the page scroll */
+    /* Leave room for five waiting chips and a driving line on shorter TVs. */
+    @media (min-width: 901px) and (max-height: 760px) {
+      .lane { padding: 24px; }
+      .lane-head { min-height: 90px; }
+      .lane-head img { height: 90px; }
+      .label { margin-top: 10px; }
+      .foot { padding-top: 12px; }
+    }
+
+    /* Portrait tablets and phones stack the cards and scroll naturally. */
     @media (max-width: 900px) {
-      body { overflow: auto; }
-      .bar { padding: 16px 20px; }
-      .bar .brand { font-size: 18px; }
-      .bar .brand small { font-size: 12px; }
-      .bar-right { gap: 12px; }
-      #clock { font-size: 20px; white-space: nowrap; }
-      .board { grid-template-columns: 1fr; height: auto; }
-      .lane { padding: 24px 20px 28px; }
-      .lane + .lane { border-left: 0; border-top: 1px solid var(--d-line); }
-      .lane-head { gap: 14px; }
-      .lane-head img { width: 130px; }
-      .lane-head .name { font-size: 30px; }
-      .lane-head .sub { font-size: 14px; }
-      .label { font-size: 12px; margin: 22px 0 8px; }
-      .now { font-size: clamp(64px, 22vw, 110px); }
-      .now-name { font-size: 18px; min-height: 24px; }
-      .idle { font-size: 44px; }
+      body { height: auto; overflow: auto; background-attachment: scroll; }
+      .bar { padding: 20px; flex-wrap: wrap; gap: 14px; }
+      .bar .brand { gap: 10px; }
+      .bar .brand small { display: inline; font-size: 11px; }
+      .bar-right { gap: 14px; flex-wrap: wrap; }
+      #clock { font-size: 20px; }
+      .board { grid-template-columns: minmax(0, 1fr); flex: none; gap: 20px; padding: 0 20px 76px; }
+      .lane { padding: 24px; min-height: 560px; }
+      .lane-head { min-height: 110px; }
+      .lane-head img { height: 110px; }
+      .label { margin-top: 24px; }
       .next { gap: 8px; }
-      .next span { font-size: 22px; padding: 6px 14px; border-radius: 8px; }
-      .driving { font-size: 15px; }
-      .foot { margin-top: 18px; font-size: 14px; }
-      #sound { bottom: 12px; right: 12px; }
+      .next span { padding: 8px 10px; }
     }
     @media (max-width: 420px) {
-      .bar .brand small { display: none; }
-      #theme { padding: 6px 10px; font-size: 12px; }
+      .bar { gap: 12px; }
+      .bar-right { width: 100%; justify-content: space-between; }
+      .bar-right .chip-btn { padding: 8px 12px; }
     }
   </style>
 </head>
 <body>
   <div class="bar">
-    <span class="brand"><span class="logo" aria-hidden="true" style="width:44px;height:24px"></span>XPENG <small>Test Drive</small></span>
+    <span class="brand"><span class="logo" role="img" aria-label="iCAUR" style="width:118px;height:21px"></span> <small>TEST DRIVE</small></span>
     <div class="bar-right">
+      <button class="chip-btn" id="sound" data-icon="&#128266;">Enable call sound</button>
       <button class="chip-btn" id="theme" title="Switch between dark and light"></button>
       <div id="clock"></div>
     </div>
   </div>
   <div class="board" id="board"></div>
-  <button class="chip-btn" id="sound">🔇 Click to enable sound</button>
 
   <script src="/common.js"></script>
   <script>
@@ -107,12 +138,211 @@
       applyTheme();
     };
     applyTheme();
-    $('#sound').onclick = () => { soundOn = true; chime(); $('#sound').remove(); };
+    // Keep speech and its queue local to this display page.
+    const announcements = (() => {
+      const button = $('#sound');
+      const pending = [];
+      let models = [];
+      let busy = false;
+      let voices = [];
+      let synth;
+      let currentUtterance;
+      let audio;
+      let voiceRetryAt = 0;
+      try {
+        if (window.speechSynthesis && window.SpeechSynthesisUtterance) {
+          synth = window.speechSynthesis;
+          const loadVoices = () => { try { voices = synth.getVoices(); } catch {} };
+          loadVoices();
+          synth.onvoiceschanged = loadVoices;
+        }
+      } catch {}
+      const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      function resume() {
+        try { if (synth?.paused) synth.resume(); } catch {}
+      }
+      function speak(text) {
+        return new Promise((resolve) => {
+          if (!synth) return resolve();
+          let utterance;
+          let watchdog;
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(watchdog);
+            if (currentUtterance === utterance) currentUtterance = null;
+            resolve();
+          };
+          try {
+            voices = synth.getVoices();
+            const english = voices.filter((v) => /^en(?:-|$)/i.test(v.lang));
+            const voice = english.find((v) => /^en-PH$/i.test(v.lang))
+              || english.find((v) => /Natural|Online|Google/i.test(v.name))
+              || english.find((v) => /^en-(US|GB)$/i.test(v.lang))
+              || english.find((v) => v.default);
+            utterance = new window.SpeechSynthesisUtterance(text);
+            if (voice) utterance.voice = voice;
+            utterance.lang = voice?.lang || 'en-US';
+            utterance.rate = 0.95;
+            utterance.pitch = 1;
+            utterance.volume = 1;
+            utterance.onend = utterance.onerror = finish;
+            currentUtterance = utterance;
+            watchdog = setTimeout(() => {
+              if (settled) return;
+              try {
+                if (currentUtterance === utterance) synth.cancel();
+              } catch {} finally { finish(); }
+            }, Math.max(6000, text.length * 150));
+            resume();
+            synth.speak(utterance);
+          } catch { finish(); }
+        });
+      }
+      function updateButton() { button.disabled = busy || pending.length > 0; }
+      function unlockAudio() {
+        try {
+          // Reuse this element for real calls so its play permission comes from the click.
+          audio = new Audio('data:audio/wav;base64,UklGRiUAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQEAAACA');
+          void Promise.resolve(audio.play()).catch(() => {});
+        } catch {}
+      }
+      function playAudio() {
+        return new Promise((resolve, reject) => {
+          let settled = false;
+          let watchdog;
+          const finish = (error) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(watchdog);
+            audio.onended = audio.onerror = audio.onloadedmetadata = null;
+            try { audio.pause(); } catch {}
+            if (error) reject(error); else resolve();
+          };
+          const armWatchdog = () => {
+            clearTimeout(watchdog);
+            const duration = Number.isFinite(audio.duration) ? audio.duration * 1000 : 0;
+            watchdog = setTimeout(() => finish(new Error('Audio playback timed out')), Math.max(8000, duration + 3000));
+          };
+          try {
+            audio.currentTime = 0;
+            audio.onended = () => finish();
+            audio.onerror = () => finish(new Error('Audio playback failed'));
+            audio.onloadedmetadata = armWatchdog;
+            armWatchdog();
+            Promise.resolve(audio.play()).catch(() => finish(new Error('Audio playback failed')));
+          } catch (error) { finish(error); }
+        });
+      }
+      async function serverVoice(number) {
+        if (!number || !audio || Date.now() < voiceRetryAt) return false;
+        let url;
+        let playedOnce = false;
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 10000); // uncached generation can take ~4-5 s
+          let blob;
+          try {
+            // Recalls use the same number/URL: always ask the server for its current calledAt cache key.
+            const response = await fetch(`/api/announce?number=${encodeURIComponent(number)}`, { signal: controller.signal, cache: 'no-store' });
+            if (response.status !== 200) {
+              if (response.status === 503) {
+                const data = await response.json().catch(() => ({}));
+                if (data.error === 'Voice not configured') voiceRetryAt = Date.now() + 5 * 60 * 1000;
+              }
+              return false;
+            }
+            blob = await response.blob();
+          } finally { clearTimeout(timer); }
+          url = URL.createObjectURL(blob);
+          audio.src = url;
+          await playAudio();
+          playedOnce = true;
+          document.body.dataset.voice = 'ai';
+          await delay(1000);
+          await playAudio();
+          document.body.dataset.voice = 'ai';
+          return true;
+        } catch {
+          return playedOnce;
+        } finally {
+          if (url) {
+            try { audio.pause(); audio.removeAttribute('src'); audio.load(); } catch {}
+            URL.revokeObjectURL(url);
+          }
+        }
+      }
+      async function drain() {
+        if (busy || document.hidden) return;
+        busy = true;
+        try {
+          updateButton();
+          while (pending.length && !document.hidden) {
+            const { text, number } = pending.shift();
+            chime();
+            await delay(900); // The existing chime's last oscillator stops at 870 ms.
+            if (await serverVoice(number)) continue;
+            document.body.dataset.voice = 'browser';
+            await speak(text);
+            if (synth) {
+              await delay(1000);
+              await speak(text);
+            }
+          }
+        } finally {
+          busy = false;
+          updateButton();
+        }
+      }
+      function enqueue(text, number) {
+        pending.push({ text, number });
+        if (pending.length > 5) pending.splice(0, pending.length - 5);
+        updateButton();
+        void drain();
+      }
+      button.onclick = () => {
+        if (busy || pending.length) return;
+        // Only reset an idle engine, never cancel a real call or its repetition.
+        try { synth?.cancel(); } catch {}
+        if (!soundOn) {
+          soundOn = true;
+          busy = true;
+          updateButton();
+          chime();
+          unlockAudio();
+          // speak() runs synchronously up to synth.speak(), within this gesture.
+          const confirmation = speak('Call announcements are on.');
+          button.textContent = 'Test announcement';
+          void Promise.all([confirmation, delay(900)]).finally(() => {
+            busy = false;
+            updateButton();
+            void drain();
+          });
+        } else {
+          const first = models[0] || { id: 'V27', name: 'V27' };
+          enqueue(callAnnouncementText({ number: `${first.id}-001`, name: 'Juan Dela Cruz', callCount: 1 }));
+        }
+      };
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+          if (pending.length > 5) pending.splice(0, pending.length - 5);
+        } else {
+          resume();
+          void drain();
+        }
+      });
+      return {
+        setModels(value) { models = value; },
+        call(ticket) { if (soundOn) enqueue(callAnnouncementText(ticket), ticket.number); },
+      };
+    })();
 
     function tick() { $('#clock').textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
     tick(); setInterval(tick, 10000);
 
     function render(state) {
+      announcements.setModels(state.models);
       const board = $('#board');
       board.style.setProperty('--n', state.models.length);
       board.innerHTML = state.models.map((m) => {
@@ -137,7 +367,7 @@
 
     live(render, (called) => {
       flashModel = called.model;
-      if (soundOn) chime();
+      announcements.call(called);
     });
   </script>
 </body>

@@ -7,6 +7,7 @@ const Q = require('../../lib/queue.js');
 const N = require('../../lib/notify.js');
 const { extractLicense } = require('../../lib/license.js');
 const G = require('../../lib/guests.js');
+const { createAnnouncer } = require('../../lib/announce.js');
 
 export const config = { path: '/api/*' };
 
@@ -22,6 +23,13 @@ function store() {
 function photoStore() {
   return getStore({ name: 'licenses' });
 }
+
+const announce = createAnnouncer({
+  cache: {
+    get: (key) => getStore({ name: 'announcements', consistency: 'strong' }).get(key, { type: 'arrayBuffer' }),
+    set: (key, bytes) => getStore({ name: 'announcements', consistency: 'strong' }).set(key, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), { metadata: { contentType: 'audio/mpeg' } }),
+  },
+});
 
 async function load() {
   const s = await store().get(Q.today(), { type: 'json' });
@@ -45,8 +53,10 @@ function json(status, body) {
 async function readBody(req) {
   try {
     const text = await req.text();
+    if (Buffer.byteLength(text, 'utf8') > Q.MAX_BODY_BYTES) throw Q.httpError(413, 'Request is too large (maximum 5.5 MB)');
     return text ? JSON.parse(text) : {};
-  } catch {
+  } catch (err) {
+    if (err.status) throw err;
     throw Q.httpError(400, 'Invalid JSON');
   }
 }
@@ -57,10 +67,31 @@ function requireStaff(req) {
 
 // ---------- routes ----------
 export default async (req) => {
-  const { pathname } = new URL(req.url);
+  const { pathname, searchParams } = new URL(req.url);
   const method = req.method;
   try {
     if (pathname === '/api/state' && method === 'GET') return json(200, Q.publicState(await load()));
+
+    if (pathname === '/api/announce' && method === 'GET') {
+      const result = await announce(load, new URL(req.url).searchParams.get('number'));
+      return result.status === 200
+        ? new Response(result.body, { status: 200, headers: result.headers })
+        : json(result.status, result.body);
+    }
+
+    if (pathname === '/api/reserved' && method === 'GET') {
+      return json(200, (await store().get('units-reserved', { type: 'json' })) || { count: 0, updatedAt: null });
+    }
+
+    if (pathname === '/api/staff/reserved' && method === 'POST') {
+      requireStaff(req);
+      const body = await readBody(req);
+      // Same strong-consistency read-modify-write pattern as the queue; single operator.
+      const current = (await store().get('units-reserved', { type: 'json' })) || { count: 0, updatedAt: null };
+      const reserved = Q.updateReserved(current, body);
+      await store().setJSON('units-reserved', reserved);
+      return json(200, reserved);
+    }
 
     // Lets the form show the invitation as they type; answers with the dealer name only.
     if (pathname === '/api/guest-lookup' && method === 'POST') {
@@ -73,14 +104,17 @@ export default async (req) => {
 
     if (pathname === '/api/tickets' && method === 'POST') {
       const body = await readBody(req);
-      const photo = Q.decodePhoto(body.licensePhoto);
+      const media = Q.ticketMedia(body);
       const state = await load();
-      const t = Q.createTicket(state, { ...G.applyGuest(body, await loadGuests()), hasLicensePhoto: !!photo });
-      if (photo) await photoStore().set(t.id, new Blob([photo.bytes], { type: photo.type }), { metadata: { type: photo.type, number: t.number, date: state.date } });
+      const t = Q.createTicket(state, G.applyGuest(body, await loadGuests()));
+      for (const [part, photo] of Object.entries(media)) {
+        const key = t.id + (part === 'front' ? '' : '-' + part);
+        await photoStore().set(key, new Blob([photo.bytes], { type: photo.type }), { metadata: { type: photo.type, number: t.number, date: state.date } });
+      }
       await save(state);
       const position = Q.position(state, t);
       await N.welcome(state, t, position);
-      return json(201, { ticket: t, position });
+      return json(201, { ticket: Q.customerTicket(t), position });
     }
 
     let m = pathname.match(/^\/api\/tickets\/(\w+)$/);
@@ -89,7 +123,7 @@ export default async (req) => {
       const t = state.tickets.find((x) => x.id === m[1]);
       if (!t) throw Q.httpError(404, 'Ticket not found');
       // The id is unguessable and only the ticket holder has it, so they see their own number in full.
-      return json(200, { ticket: t, position: Q.position(state, t) });
+      return json(200, { ticket: Q.customerTicket(t), position: Q.position(state, t) });
     }
 
     m = pathname.match(/^\/api\/tickets\/(\w+)\/cancel$/);
@@ -99,7 +133,7 @@ export default async (req) => {
       const t = Q.act(state, m[1], 'cancel');
       await save(state);
       if (await N.notifyNext(state, before)) await save(state);
-      return json(200, { ticket: t });
+      return json(200, { ticket: Q.customerTicket(t) });
     }
 
     // ---- staff-only ----
@@ -131,7 +165,10 @@ export default async (req) => {
     m = pathname.match(/^\/api\/staff\/license\/(\w+)$/);
     if (m && method === 'GET') {
       requireStaff(req);
-      const r = await photoStore().getWithMetadata(m[1], { type: 'arrayBuffer' });
+      const part = searchParams.get('part') || 'front';
+      if (!['front', 'back', 'signature'].includes(part)) throw Q.httpError(400, 'Unknown license part');
+      const key = m[1] + (part === 'front' ? '' : '-' + part);
+      const r = await photoStore().getWithMetadata(key, { type: 'arrayBuffer' });
       if (!r || !r.data) throw Q.httpError(404, 'No license photo for this ticket');
       return new Response(r.data, { status: 200, headers: { 'Content-Type': (r.metadata && r.metadata.type) || 'image/jpeg', 'Cache-Control': 'private, no-store' } });
     }

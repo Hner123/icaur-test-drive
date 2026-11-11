@@ -2,10 +2,11 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "xpeng-queue",
+      "name": "icaur-queue",
       "runtimeExecutable": "node",
       "runtimeArgs": ["server.js"],
-      "port": 3000
+      "env": { "PORT": "3107", "SMS_PROVIDER": "none" },
+      "port": 3107
     }
   ]
 }

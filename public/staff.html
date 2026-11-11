@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>XPENG Queue — Staff</title>
+  <title>iCAUR Queue — Staff</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/staff"><span class="logo" aria-hidden="true"></span>XPENG <small>Staff Console</small></a>
-    <nav><a href="/">Kiosk</a><a href="/staff" class="active">Staff</a><a href="/display" target="_blank">Lobby display</a><a href="/qr" target="_blank">QR poster</a><a href="#" id="logout" hidden>Sign out</a></nav>
+    <a class="brand" href="/staff"><span class="logo" role="img" aria-label="iCAUR"></span> <small>Staff Console</small></a>
+    <nav><a href="/">Kiosk</a><a href="/staff" class="active">Staff</a><a href="/display" target="_blank">Lobby display</a><a href="/reserved" target="_blank">Units reserved</a><a href="/qr" target="_blank">QR poster</a><a href="#" id="logout" hidden>Sign out</a></nav>
   </header>
 
   <main class="wrap" id="login" style="max-width:420px">
@@ -33,6 +33,19 @@
       </div>
       <div style="margin-left:auto;display:flex;gap:24px;flex-wrap:wrap" id="summary"></div>
     </div>
+    <section class="panel reserved-panel" aria-labelledby="reserved-heading">
+      <div><h2 id="reserved-heading">Units reserved</h2><div id="reserved-count" aria-live="polite">0</div></div>
+      <div class="reserved-controls">
+        <button type="button" class="btn accent" id="reserved-plus">+1</button>
+        <button type="button" class="btn ghost" id="reserved-minus">-1</button>
+        <form id="reserved-set-form">
+          <label for="reserved-set">Set...</label>
+          <input type="number" id="reserved-set" min="0" max="99999" step="1" required />
+          <button type="submit" class="btn ghost">Save</button>
+        </form>
+      </div>
+      <div class="error" id="reserved-error" role="alert"></div>
+    </section>
     <div class="cols" id="cols"></div>
     <section class="panel" style="margin-top:20px">
       <div class="guest-head">
@@ -62,6 +75,7 @@
       </div>
       <div class="guest-result" id="guest-result" hidden></div>
       <div class="guest-dealers" id="guest-dealers"></div>
+      <p class="muted" style="font-size:13px">Matches by mobile number or email mark the registration as on the guest list. If the inviting dealer matches one of the five Location/Dealer choices, that choice is filled and locked. Other dealers leave the customer’s choice open.</p>
     </section>
     <div style="margin-top:40px;text-align:right">
       <button class="btn danger sm" id="reset">Archive &amp; reset today's queue</button>
@@ -99,23 +113,56 @@
       try {
         state = await api('/api/staff/tickets', { pin });
         render();
+        await loadReserved();
       } catch (err) {
         if (err.status === 401) $('#logout').click();
       }
     }
 
+    function renderReserved(value) {
+      $('#reserved-count').textContent = value.count.toLocaleString('en-US');
+    }
+    async function loadReserved() {
+      try { renderReserved(await api('/api/reserved')); }
+      catch (err) { $('#reserved-error').textContent = err.message; }
+    }
+    async function changeReserved(body) {
+      const controls = [...document.querySelectorAll('.reserved-controls button')];
+      controls.forEach((b) => b.disabled = true);
+      $('#reserved-error').textContent = '';
+      try { renderReserved(await api('/api/staff/reserved', { method: 'POST', pin, body })); }
+      catch (err) { $('#reserved-error').textContent = err.message; }
+      finally { controls.forEach((b) => b.disabled = false); }
+    }
+    $('#reserved-plus').onclick = () => changeReserved({ delta: 1 });
+    $('#reserved-minus').onclick = () => changeReserved({ delta: -1 });
+    $('#reserved-set-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const count = Number($('#reserved-set').value);
+      if (!Number.isInteger(count) || count < 0 || count > 99999) return;
+      if (await confirmModal({ title: 'Set units reserved?', message: `Replace the event total with ${count.toLocaleString('en-US')}?`, confirmText: 'Set total' })) {
+        await changeReserved({ set: count });
+      }
+    };
+
     function row(t, actions) {
       const time = t.status === 'waiting' ? `joined ${ago(t.createdAt)}` :
         t.status === 'called' ? `called ${ago(t.calledAt)}` :
         t.status === 'driving' ? `driving since ${ago(t.startedAt)}` : (STATUS_LABEL[t.status] + ' · ' + ago(t.finishedAt || t.createdAt));
+      const media = [[t.hasLicensePhoto, 'front', 'View license (front)'], [t.hasLicenseBack, 'back', '(back)'], [t.hasSignature, 'signature', 'Signature']]
+        .filter(([present]) => present).map(([, part, label]) => `<button type="button" class="link-inline" data-photo="${t.id}" data-part="${part}">${label}</button>`).join(' · ');
       const lic = t.licenseNumber
-        ? `<div>Lic. ${esc(t.licenseNumber)} · exp ${esc(cardDate(t.licenseExpiry))}${t.licenseExpiry && t.licenseExpiry < state.date ? ' <span class="pill expired">Expired</span>' : ''}${t.hasLicensePhoto ? ` · <button type="button" class="link-inline" data-photo="${t.id}">View license</button>` : ''}</div>`
+        ? `<div>Lic. ${esc(t.licenseNumber)} · exp ${esc(cardDate(t.licenseExpiry))}${t.licenseExpiry && t.licenseExpiry < state.date ? ' <span class="pill expired">Expired</span>' : ''}</div>`
         : '<div class="muted">No license on file</div>';
+      const legacyTypes = { walk_in: 'Walk-in', icaur_ph: 'Signed up thru iCAUR Philippines', dealer: 'Invited by dealer / signed up thru dealer' };
+      const details = [t.gender, t.locationDealer && 'Location/Dealer: ' + t.locationDealer, t.salesExecutive && 'Sales Exec: ' + t.salesExecutive, t.testDriveResource && 'Test Drive Resource: ' + t.testDriveResource];
+      const legacy = [t.municipality, legacyTypes[t.customerType] || t.customerType, t.dealer];
       return `<li>
         <div class="n">${t.number}</div>
-        <div class="who"><div>${esc(t.name)}</div><div>${esc(t.phone)} · ${time}</div>${
-          t.email ? `<div>${esc(t.email)} · ${esc(t.municipality)}</div><div>${esc((state.customerTypes || {})[t.customerType] || t.customerType || '')}${t.dealer ? ' — ' + esc(t.dealer) : ''}${t.guestMatched ? ' <span class="pill driving">On guest list</span>' : ''}</div>` : ''
-        }${lic}</div>
+        <div class="who"><div>${esc(t.name)}${t.guestMatched ? ' <span class="pill driving">On guest list</span>' : ''}</div><div>${esc(t.phone)} · ${time}</div>
+          ${t.email ? `<div>${esc(t.email)}</div>` : ''}
+          ${[...details, ...legacy].filter(Boolean).map((d) => `<div>${esc(d)}</div>`).join('')}
+          ${typeof t.hasReservation === 'boolean' ? `<div>${t.hasReservation ? 'Existing reservation: ' + esc(t.reservationDealer) : 'No existing reservation'}</div>` : ''}${lic}${media ? `<div>${media}</div>` : ''}</div>
         <div class="acts">${actions.map(([a, label, cls]) => `<button class="btn sm ${cls || 'ghost'}" data-id="${t.id}" data-act="${a}">${label}</button>`).join('')}</div>
       </li>`;
     }
@@ -154,7 +201,7 @@
     function renderGuests(s) {
       $('#guest-summary').textContent = s.count
         ? `${s.count} invited ${s.count === 1 ? 'guest' : 'guests'} · last updated ${new Date(s.updatedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`
-        : 'No list yet. Upload one so invited guests are tagged with their dealer automatically.';
+        : 'No list yet. Upload one to identify invited guests and fill matching Location/Dealer choices.';
       $('#guest-clear').hidden = !s.count;
       $('#guest-dealers').innerHTML = s.dealers.map((d) => `<span>${esc(d.dealer)}: ${d.count}</span>`).join('');
     }
@@ -247,10 +294,10 @@
       });
 
       const list = [
-        ['Queue No.', 'Preferred Model', 'Complete Name', 'Mobile Number', 'E-mail Address', 'Municipality', 'Customer Type', 'Inviting Dealer', 'On Dealer Guest List',
+        ['Queue No.', 'Preferred Model', 'Complete Name', 'Mobile Number', 'E-mail Address', 'Gender', 'Location/Dealer', 'Assigned Sales Executive', 'Test Drive Resource', 'On Dealer Guest List', 'Existing reservation', 'Reservation dealer',
           'License No.', 'License Expiry', 'Test Drive Status', 'Remarks', 'Registered', 'Called', 'Drive Started', 'Finished', 'Wait (min)', 'Drive (min)'],
         ...rows.map(({ t, status, remarks }) => [
-          t.number, t.model, t.name, t.phone, t.email || '', t.municipality || '', data.customerTypes[t.customerType] || '', t.dealer || '', t.guestMatched ? 'Yes' : 'No',
+          t.number, t.model, t.name, t.phone, t.email || '', t.gender || '', t.locationDealer || '', t.salesExecutive || '', t.testDriveResource || '', t.guestMatched ? 'Yes' : 'No', typeof t.hasReservation === 'boolean' ? (t.hasReservation ? 'Yes' : 'No') : '', t.reservationDealer || '',
           t.licenseNumber || '', cardDate(t.licenseExpiry), status, remarks, manilaTime(t.createdAt), manilaTime(t.calledAt), manilaTime(t.startedAt),
           t.status === 'done' || t.status === 'noshow' || t.status === 'cancelled' ? manilaTime(t.finishedAt) : '', minutesBetween(t.createdAt, t.calledAt), minutesBetween(t.startedAt, t.finishedAt),
         ]),
@@ -269,20 +316,21 @@
         return keys.length ? [[], [title], header, ...keys.map((k) => line(labelOf(k), rows.filter((r) => keyOf(r.t) === k)))] : [];
       };
       const summary = [
-        ['XPENG Test Drive — Daily Report'],
+        ['iCAUR Test Drive — Daily Report'],
         ['Date', cardDate(data.date) + (isToday ? ' (today, still in progress)' : '')],
         ['Generated', new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })],
         [],
         header,
         line('All models', rows),
         ...data.models.map((m) => line(m.name, rows.filter((r) => r.t.model === m.id))),
-        ...group('By customer type', (t) => t.customerType, (k) => data.customerTypes[k] || k),
-        ...group('By inviting dealer', (t) => t.dealer, (k) => k),
+        ...group('By location/dealer', (t) => t.locationDealer, (k) => k),
+        ...group('By test drive resource', (t) => t.testDriveResource, (k) => k),
+        ...group('By existing reservation', (t) => t.hasReservation === true ? 'Yes - ' + t.reservationDealer : t.hasReservation === false ? 'No' : '', (k) => k),
       ];
 
       const book = XLSX.utils.book_new();
       const listSheet = XLSX.utils.aoa_to_sheet(list);
-      listSheet['!cols'] = [8, 10, 24, 15, 26, 18, 30, 22, 12, 16, 12, 16, 30, 10, 10, 12, 10, 9, 9].map((wch) => ({ wch }));
+      listSheet['!cols'] = [12, 18, 24, 18, 26, 10, 24, 28, 22, 20, 22, 24, 18, 16, 20, 30, 16, 16, 16, 16, 12, 12].map((wch) => ({ wch }));
       listSheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: list.length - 1, c: list[0].length - 1 } }) };
       const summarySheet = XLSX.utils.aoa_to_sheet(summary);
       summarySheet['!cols'] = [{ wch: 38 }, ...header.slice(1).map(() => ({ wch: 14 }))];
@@ -307,7 +355,7 @@
       $('#report-result').hidden = true;
       try {
         const [data] = await Promise.all([api('/api/staff/report/' + day, { pin }), loadXlsxLibrary()]);
-        XLSX.writeFile(buildReportWorkbook(data), `xpeng-test-drive-${day}.xlsx`);
+        XLSX.writeFile(buildReportWorkbook(data), `icaur-test-drive-${day}.xlsx`);
         $('#report-result').hidden = false;
         $('#report-result').classList.remove('error-text');
         $('#report-result').textContent = data.tickets.length
@@ -323,13 +371,13 @@
     };
 
     // License photo viewer: fetched with the staff PIN, shown in a modal, never linked directly.
-    async function viewLicense(id, number) {
-      const res = await fetch('/api/staff/license/' + id, { headers: { 'x-staff-pin': pin } });
-      if (!res.ok) return toast('No license photo on file');
+    async function viewLicense(id, number, part = 'front') {
+      const res = await fetch('/api/staff/license/' + id + '?part=' + encodeURIComponent(part), { headers: { 'x-staff-pin': pin } });
+      if (!res.ok) return toast('Could not open this verification image');
       const url = URL.createObjectURL(await res.blob());
       const wrap = document.createElement('div');
       wrap.className = 'modal-backdrop';
-      wrap.innerHTML = `<div class="modal modal-wide" role="dialog" aria-modal="true"><h2>License — ${esc(number)}</h2><img src="${url}" alt="Driver's license" style="width:100%;border-radius:10px;border:1px solid var(--line)" /><div class="modal-actions"><button type="button" class="btn ghost" data-close>Close</button></div></div>`;
+      wrap.innerHTML = `<div class="modal modal-wide" role="dialog" aria-modal="true"><h2>${part === 'signature' ? 'Signature' : 'License (' + esc(part) + ')'} — ${esc(number)}</h2><img src="${url}" alt="${part === 'signature' ? 'Signature' : 'Driver license ' + esc(part)}" style="width:100%;border-radius:10px;border:1px solid var(--line)" /><div class="modal-actions"><button type="button" class="btn ghost" data-close>Close</button></div></div>`;
       const close = () => { wrap.classList.remove('open'); setTimeout(() => { wrap.remove(); URL.revokeObjectURL(url); }, 180); document.removeEventListener('keydown', onKey); };
       const onKey = (ev) => ev.key === 'Escape' && close();
       wrap.addEventListener('click', (ev) => (ev.target === wrap || ev.target.closest('[data-close]')) && close());
@@ -341,7 +389,7 @@
     $('#cols').addEventListener('click', async (e) => {
       const b = e.target.closest('button');
       if (!b) return;
-      if (b.dataset.photo) return viewLicense(b.dataset.photo, b.closest('li').querySelector('.n').textContent);
+      if (b.dataset.photo) return viewLicense(b.dataset.photo, b.closest('li').querySelector('.n').textContent, b.dataset.part);
       b.disabled = true;
       try {
         if (b.dataset.next) {

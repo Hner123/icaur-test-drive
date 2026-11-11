@@ -1,4 +1,4 @@
-// XPeng Test Drive Queue — local/showroom Node server (zero dependencies).
+// iCAUR Test Drive Queue — local/showroom Node server (zero dependencies).
 // Run: node server.js   (PORT and STAFF_PIN can be set via env)
 // The same routes are served on Netlify by netlify/functions/api.mjs; queue rules live in lib/queue.js.
 const http = require('http');
@@ -8,13 +8,15 @@ const Q = require('./lib/queue');
 const N = require('./lib/notify');
 const { extractLicense } = require('./lib/license');
 const G = require('./lib/guests');
+const announce = require('./lib/announce').createAnnouncer();
 
 const PORT = Number(process.env.PORT) || 3000;
 const STAFF_PIN = process.env.STAFF_PIN || '1234';
 const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'queue.json');
-const LICENSE_DIR = path.join(DATA_DIR, 'licenses'); // license photos, one file per ticket id
+const LICENSE_DIR = path.join(DATA_DIR, 'licenses'); // front, back and signature files per ticket id
 const GUESTS_FILE = path.join(DATA_DIR, 'guests.json'); // dealer guest list, kept across days
+const RESERVED_FILE = path.join(DATA_DIR, 'reserved.json'); // event-wide, independent of queue days
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 // ---------- persistence ----------
@@ -58,6 +60,11 @@ function saveGuests(list) {
   fs.writeFileSync(GUESTS_FILE, JSON.stringify(list, null, 2));
 }
 
+function loadReserved() {
+  if (!fs.existsSync(RESERVED_FILE)) return { count: 0, updatedAt: null };
+  return JSON.parse(fs.readFileSync(RESERVED_FILE, 'utf8'));
+}
+
 function rollover() {
   if (state.date !== Q.today()) {
     state = archive(state);
@@ -74,11 +81,19 @@ function send(res, status, body) {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
+    let size = 0;
+    let tooLarge = false;
     req.on('data', (c) => {
-      data += c;
-      if (data.length > 6e6) req.destroy(); // license photos are ~0.3 MB after client-side downsizing
+      size += c.length;
+      if (size > Q.MAX_BODY_BYTES) {
+        tooLarge = true;
+        data = '';
+        reject(Q.httpError(413, 'Request is too large (maximum 5.5 MB)'));
+      } else if (!tooLarge) data += c;
     });
+    req.on('error', reject);
     req.on('end', () => {
+      if (tooLarge) return;
       try {
         resolve(data ? JSON.parse(data) : {});
       } catch {
@@ -113,11 +128,30 @@ function serveStatic(req, res, pathname) {
 
 // ---------- routes ----------
 const server = http.createServer(async (req, res) => {
-  const { pathname } = new URL(req.url, 'http://localhost');
+  const { pathname, searchParams } = new URL(req.url, 'http://localhost');
   try {
     rollover();
 
     if (pathname === '/api/state' && req.method === 'GET') return send(res, 200, Q.publicState(state));
+
+    if (pathname === '/api/announce' && req.method === 'GET') {
+      const result = await announce(state, new URL(req.url, 'http://localhost').searchParams.get('number'));
+      if (result.status !== 200) return send(res, result.status, result.body);
+      res.writeHead(200, result.headers);
+      return res.end(result.body);
+    }
+
+    if (pathname === '/api/reserved' && req.method === 'GET') return send(res, 200, loadReserved());
+
+    if (pathname === '/api/staff/reserved' && req.method === 'POST') {
+      requireStaff(req);
+      const body = await readBody(req);
+      // Synchronous read/write after body parsing keeps local updates together.
+      const reserved = Q.updateReserved(loadReserved(), body);
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(RESERVED_FILE, JSON.stringify(reserved, null, 2));
+      return send(res, 200, reserved);
+    }
 
     if (pathname === '/api/guest-lookup' && req.method === 'POST') {
       const guest = G.findGuest(loadGuests(), await readBody(req));
@@ -128,16 +162,17 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/tickets' && req.method === 'POST') {
       const body = await readBody(req);
-      const photo = Q.decodePhoto(body.licensePhoto);
-      const t = Q.createTicket(state, { ...G.applyGuest(body, loadGuests()), hasLicensePhoto: !!photo });
-      if (photo) {
-        fs.mkdirSync(LICENSE_DIR, { recursive: true });
-        fs.writeFileSync(path.join(LICENSE_DIR, `${t.id}.${photo.type.split('/')[1]}`), photo.bytes);
+      const media = Q.ticketMedia(body);
+      const t = Q.createTicket(state, G.applyGuest(body, loadGuests()));
+      fs.mkdirSync(LICENSE_DIR, { recursive: true });
+      for (const [part, photo] of Object.entries(media)) {
+        const key = t.id + (part === 'front' ? '' : '-' + part);
+        fs.writeFileSync(path.join(LICENSE_DIR, `${key}.${photo.type.split('/')[1]}`), photo.bytes);
       }
       save();
       const position = Q.position(state, t);
       N.welcome(state, t, position); // fire-and-forget locally
-      return send(res, 201, { ticket: t, position });
+      return send(res, 201, { ticket: Q.customerTicket(t), position });
     }
 
     let m = pathname.match(/^\/api\/tickets\/(\w+)$/);
@@ -145,7 +180,7 @@ const server = http.createServer(async (req, res) => {
       const t = state.tickets.find((x) => x.id === m[1]);
       if (!t) throw Q.httpError(404, 'Ticket not found');
       // The id is unguessable and only the ticket holder has it, so they see their own number in full.
-      return send(res, 200, { ticket: t, position: Q.position(state, t) });
+      return send(res, 200, { ticket: Q.customerTicket(t), position: Q.position(state, t) });
     }
 
     // Customer may cancel their own ticket (they hold the unguessable id)
@@ -155,7 +190,7 @@ const server = http.createServer(async (req, res) => {
       const t = Q.act(state, m[1], 'cancel');
       save();
       N.notifyNext(state, before).then((changed) => changed && save());
-      return send(res, 200, { ticket: t });
+      return send(res, 200, { ticket: Q.customerTicket(t) });
     }
 
     // ---- staff-only ----
@@ -186,7 +221,10 @@ const server = http.createServer(async (req, res) => {
     m = pathname.match(/^\/api\/staff\/license\/(\w+)$/);
     if (m && req.method === 'GET') {
       requireStaff(req);
-      const file = ['jpeg', 'png', 'webp'].map((e) => path.join(LICENSE_DIR, `${m[1]}.${e}`)).find((f) => fs.existsSync(f));
+      const part = searchParams.get('part') || 'front';
+      if (!['front', 'back', 'signature'].includes(part)) throw Q.httpError(400, 'Unknown license part');
+      const key = m[1] + (part === 'front' ? '' : '-' + part);
+      const file = ['jpeg', 'png', 'webp'].map((e) => path.join(LICENSE_DIR, `${key}.${e}`)).find((f) => fs.existsSync(f));
       if (!file) throw Q.httpError(404, 'No license photo for this ticket');
       res.writeHead(200, { 'Content-Type': `image/${path.extname(file).slice(1)}`, 'Cache-Control': 'private, no-store' });
       return res.end(fs.readFileSync(file));
@@ -246,7 +284,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`XPeng Test Drive Queue running:`);
+  console.log(`iCAUR Test Drive Queue running:`);
   console.log(`  Customer kiosk : http://localhost:${PORT}/`);
   console.log(`  Staff console  : http://localhost:${PORT}/staff   (PIN: ${STAFF_PIN === '1234' ? '1234 — set STAFF_PIN to change' : 'set via STAFF_PIN'})`);
   console.log(`  Lobby display  : http://localhost:${PORT}/display`);
